@@ -312,7 +312,6 @@ no such column: myapp_note.date_and_text
 
 <div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> __future__ <span class="pl-k">import</span> unicode_literals
 
-<span class="pl-k">from</span> collections <span class="pl-k">import</span> defaultdict
 <span class="pl-k">from</span> datetime <span class="pl-k">import</span> datetime
 <span class="pl-k">from</span> django.db <span class="pl-k">import</span> migrations
 
@@ -325,21 +324,9 @@ no such column: myapp_note.date_and_text
 
 <span class="pl-k">def</span> <span class="pl-en">forwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
     Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
-    user_date_notes <span class="pl-k">=</span> defaultdict(<span class="pl-c1">list</span>)
     <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
         note.date, note.text <span class="pl-k">=</span> parse_date_and_text(note.date_and_text)
         note.save()
-        user_date_notes[(note.user, note.date)].append(note)
-
-    <span class="pl-c"># Merge any notes from the same user on the same date</span>
-    <span class="pl-k">for</span> same_date_notes <span class="pl-k">in</span> user_date_notes.values():
-        <span class="pl-k">if</span> <span class="pl-c1">len</span>(same_date_notes) <span class="pl-k">&gt;</span> <span class="pl-c1">1</span>:
-            new_text <span class="pl-k">=</span> <span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n\n</span><span class="pl-pds">'</span></span>.join([note.text <span class="pl-k">for</span> note <span class="pl-k">in</span> same_date_notes])
-            same_date_notes[<span class="pl-c1">0</span>].text <span class="pl-k">=</span> new_text
-            same_date_notes[<span class="pl-c1">0</span>].save()
-            <span class="pl-k">for</span> i <span class="pl-k">in</span> <span class="pl-c1">range</span>(<span class="pl-c1">1</span>, <span class="pl-c1">len</span>(same_date_notes)):
-                same_date_notes[i].delete()
-
 
 <span class="pl-k">def</span> <span class="pl-en">backwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
     Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
@@ -360,7 +347,9 @@ no such column: myapp_note.date_and_text
 
 <p>Our data migration parses and copies data from the old and hidden <code>date_and_text</code> field to the new <code>date</code> and <code>text</code> fields. Remember how we waited for all our new code to deploy before performing this step? That ensured that nobody had added anything new to <code>date_and_text</code> that we could potentially overlook.</p>
 
-<p>The data migration </p>
+<p>I also added a reverse method <code>backwards()</code> to make this data migration reversible. If we ran into problems, this would let us safely bring our database schema back to the starting point, keeping our data intact.</p>
+
+<p>Let's apply this data migration right away so people can once again see their old/existing notes: run <code>python manage.py migrate</code> on the production database. Note that Django might complain about model changes not being in a migration (from when we commented out <code>date_and_text</code> in our <code>models.py</code> earlier) but that's fine for now. We'll take care of that next.</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
