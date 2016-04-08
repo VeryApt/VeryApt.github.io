@@ -68,7 +68,7 @@ Everything looks good for today!
     fields <span class="pl-k">=</span> (<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date_and_text<span class="pl-pds">'</span></span>)
 admin.site.register(Note, NoteAdmin)</pre></div>
 
-<p><strong>Our goal is to move from the old Note model to the new Note model behind the scenes, without any affect on our admin-site users.</strong></p>
+<p><strong>Our goal is to move from the old Note model to the new Note model behind the scenes, without any effect on our admin-site users.</strong></p>
 
 <p>This is tricky for a few reasons:</p>
 
@@ -121,7 +121,7 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 </li>
 <li>Run <code>python manage.py migrate</code>
 </li>
-<li>Deploy new code (new version of <code>models.py</code> to webservers)!</li>
+<li>Deploy new code (new version of <code>models.py</code>) to webservers!</li>
 </ol>
 
 <p>Django tries to be pretty helpful here by asking if we're renaming our text field. It also lets us easily provide a default value for our new, non-nullable fields.</p>
@@ -366,12 +366,15 @@ no such column: myapp_note.date_and_text
 
 <p>Run <code>python manage.py makemigrations myapp</code>. Django doesn't know that we previously wrote a data migration to fill in the <code>date</code> field, so we'll humor it: type "1", then enter <code>timezone.now()</code>.</p>
 
-<p>This final migration makes the following changes:
-1. Re-enabled <code>auto_now=True</code> for our <code>date</code> field (introduce feature).
-2. Makes the <code>date</code> field required (introduce constraint).
-3. Makes the <code>text</code> field required (introduce constraint).
-4. Removes the old <code>date_and_text</code> field for good (remove old stuff).
-5. Adds our unique constraint for user+date (introduce constraint).</p>
+<p>This final migration makes the following changes:</p>
+
+<ol>
+<li>Re-enabled <code>auto_now=True</code> for our <code>date</code> field (introduce feature).</li>
+<li>Makes the <code>date</code> field required (introduce constraint).</li>
+<li>Makes the <code>text</code> field required (introduce constraint).</li>
+<li>Removes the old <code>date_and_text</code> field for good (remove old stuff).</li>
+<li>Adds our unique constraint for user+date (introduce constraint).</li>
+</ol>
 
 <p>The only change we'll make to this migration is an extra data operation to ensure our existing data obeys the new uniqueness constraint. We'll go through all notes and merge ones by the same user on the same date. Our migration file now looks like:</p>
 
