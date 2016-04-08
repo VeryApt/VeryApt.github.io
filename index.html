@@ -23,7 +23,35 @@
 
       </header>
       <section>
-        <h3>
+        <h1>
+<a id="first-post-executing-tricky-django-migrations-without-downtime" class="anchor" href="#first-post-executing-tricky-django-migrations-without-downtime" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>First post! Executing tricky Django migrations without downtime</h1>
+
+<p>Django makes it incredibly easy to change the schema of your database when you make a simple change to one of your Python models. However, when you need to make more complicated changes (especially changes involving data), it isn't always obvious how to perform the change without downtime. In this first post, we'll go over how to create and perform a sequence of migrations for a relatively tricky model change, all without interruption to our end users.</p>
+
+<h2>
+<a id="the-setup" class="anchor" href="#the-setup" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>The setup</h2>
+
+<p>Let's start with a bare-bones Django app. We have a single model called <code>Note</code> in which our various users post daily log messages.</p>
+
+<pre><code>class Note(models.Model):
+    user = models.ForeignKey(User)
+    date_and_text = models.TextField(blank=True)
+</code></pre>
+
+<p>The guy who designed this did a clumsy job, where the user types both the date and the note text in the same field. After a few months with this system, we want to switch it out to something more reasonable:</p>
+
+<pre><code>class Note(models.Model):
+    user = models.ForeignKey(User)
+    date = models.DateField(auto_now=True)
+    text = models.TextField()
+
+    class Meta:
+        unique_together = (('user', 'date'),)
+</code></pre>
+
+<p>Here, we've split out the date field and made it automatic (our users no longer have to enter it manually!). The note text is no longer optional, and we're going to be heavy-handed in enforcing that each user can only have one note per day (see the <code>unique_together</code>).</p>
+
+<h3>
 <a id="welcome-to-github-pages" class="anchor" href="#welcome-to-github-pages" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Welcome to GitHub Pages.</h3>
 
 <p>This automatic page generator is the easiest way to create beautiful pages for all of your projects. Author your page content here <a href="https://guides.github.com/features/mastering-markdown/">using GitHub Flavored Markdown</a>, select a template crafted by a designer, and publish. After your page is generated, you can check out the new <code>gh-pages</code> branch locally. If you’re using GitHub Desktop, simply sync your repository and you’ll see the new branch.</p>
