@@ -256,11 +256,17 @@ no such column: myapp_note.date_and_text
 <li>I've left out the uniqueness constraint.</li>
 </ul>
 
+<p>The <code>Note</code> model is now defined as:</p>
+
 <div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">Note</span>(<span class="pl-e">models</span>.<span class="pl-e">Model</span>):
     user <span class="pl-k">=</span> models.ForeignKey(User)
     date_and_text <span class="pl-k">=</span> models.TextField(<span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
     date <span class="pl-k">=</span> models.DateField(<span class="pl-v">null</span><span class="pl-k">=</span><span class="pl-c1">True</span>, <span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
     text <span class="pl-k">=</span> models.TextField(<span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)</pre></div>
+
+<p>To recap, I've added the new <code>date</code> and <code>text</code> fields, but I haven't removed the <code>date_and_text</code> field. I'm keeping it around so I can access its data when it comes time to do our data migration.</p>
+
+<p>I've also removed or left out several constraints: all of the fields that we're touching in this migration can now be null. This way, when we migrate the database, live (but old) code on the webservers won't complain about the new <code>text</code> and <code>date</code> fields (these will be in the database but not yet in the Python code). <em>After</em> we deploy, <em>new</em> code on the webservers won't complain about blank values in the (soon-to-be-removed) <code>date_and_text</code> field (still in the database, but no longer in the Python code).</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
