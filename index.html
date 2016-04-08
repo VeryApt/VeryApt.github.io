@@ -38,7 +38,13 @@
     date_and_text = models.TextField()
 </code></pre>
 
-<p>The guy who designed this did a clumsy job, where the user types both the date and the note text in the same field. After a few months with this system, we want to switch it out to something more reasonable:</p>
+<p>The guy who designed this did a clumsy job, where the user types both the date and the note text in the same field. A note <code>date_and_text</code> entry looks like:</p>
+
+<pre><code>2016-02-15
+Everything looks good for today!
+</code></pre>
+
+<p>After a few months with this system, we want to switch it out to something more reasonable:</p>
 
 <div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">Note</span>(<span class="pl-e">models</span>.<span class="pl-e">Model</span>):
     user <span class="pl-k">=</span> models.ForeignKey(User)
@@ -75,9 +81,107 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 </ul>
 
 <h2>
+<a id="other-code" class="anchor" href="#other-code" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Other code</h2>
+
+<p>Aside from the above changes in <code>models.py</code>, we want to update the admin site for the new Note version. Our new <code>NoteAdmin</code> will be:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">NoteAdmin</span>(<span class="pl-e">admin</span>.<span class="pl-e">ModelAdmin</span>):
+    fields <span class="pl-k">=</span> (<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>text<span class="pl-pds">'</span></span>)</pre></div>
+
+<p>Finally, we'll need a way to split the old-style <code>date_and_text</code> field into <code>date</code> and <code>text</code> components. We'll write a small parser and put it somewhere in the project:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> datetime <span class="pl-k">import</span> datetime
+
+<span class="pl-k">def</span> <span class="pl-en">parse_date_and_text</span>(<span class="pl-smi">date_and_text</span>):
+    header, text <span class="pl-k">=</span> date_and_text.split(<span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n</span><span class="pl-pds">'</span></span>, <span class="pl-c1">1</span>)
+    date <span class="pl-k">=</span> datetime.strptime(header, <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
+    <span class="pl-k">return</span> date, text</pre></div>
+
+<h2>
 <a id="the-wrong-ways" class="anchor" href="#the-wrong-ways" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>The wrong ways</h2>
 
-<p>In this section, I'm going to attempt this migration in the shoes of a Django novice and show where/how/why it goes wrong. Feel free to skip over to the next section!</p>
+<p>In this section, I'm going to attempt this migration in the shoes of a Django novice and show where/how/why it goes wrong. Feel free to skip over to the next section to learn a better way of doing things!</p>
+
+<h3>
+<a id="ive-never-done-this-before" class="anchor" href="#ive-never-done-this-before" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>"I've never done this before"</h3>
+
+<ol>
+<li>Replace old <code>Note</code> fields with new fields in <code>models.py</code>.</li>
+<li>Run <code>python manage.py makemigrations myapp</code> with the following choices:
+
+<ul>
+<li>selecting "No" for "Did you rename note.date_and_text to note.text (a TextField)?" (I guess we could have)</li>
+<li>selecting "1" and entering <code>timezone.now()</code> for "You are trying to add a non-nullable field..." for <code>date</code>
+</li>
+<li>selecting "1" and entering <code>''</code> for "You are trying to add a non-nullable field..." for <code>text</code>
+</li>
+</ul>
+</li>
+<li>Run <code>python manage.py migrate</code>
+</li>
+<li>Deploy new code (new version of <code>models.py</code> to webservers)!</li>
+</ol>
+
+<p>Django tries to be pretty helpful here by asking if we're renaming our text field. It also lets us easily provide a default value for our new, non-nullable fields.</p>
+
+<p>We quickly hit a problem in step 3, though. The command fails with <code>django.db.utils.IntegrityError: indexed columns are not unique</code>. The error comes up because we just added our new note text field, which is empty, yet we have specified a constraint making it unique.</p>
+
+<h3>
+<a id="my-first-data-migration" class="anchor" href="#my-first-data-migration" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>"My first data migration"</h3>
+
+<p>To get around this uniqueness error, let's add a <em>data migration</em> step into our migrations file. We'll parse and copy over the old <code>date_and_text</code> field <em>before</em> adding in that new uniqueness constraint. Our migration file now looks like:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> datetime <span class="pl-k">import</span> datetime
+<span class="pl-k">from</span> django.db <span class="pl-k">import</span> migrations, models
+<span class="pl-k">from</span> django.utils.timezone <span class="pl-k">import</span> utc
+
+
+<span class="pl-k">def</span> <span class="pl-en">parse_date_and_text</span>(<span class="pl-smi">date_and_text</span>):
+    header, text <span class="pl-k">=</span> date_and_text.split(<span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n</span><span class="pl-pds">'</span></span>, <span class="pl-c1">1</span>)
+    date <span class="pl-k">=</span> datetime.strptime(header, <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
+    <span class="pl-k">return</span> date, text
+
+
+<span class="pl-k">def</span> <span class="pl-en">forwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
+    Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
+    <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
+        note.date, note.text <span class="pl-k">=</span> parse_date_and_text(note.date_and_text)
+        note.save()
+
+
+<span class="pl-k">class</span> <span class="pl-en">Migration</span>(<span class="pl-e">migrations</span>.<span class="pl-e">Migration</span>):
+
+    dependencies <span class="pl-k">=</span> [
+        (<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>0001_initial<span class="pl-pds">'</span></span>),
+    ]
+
+    operations <span class="pl-k">=</span> [
+        migrations.AddField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>,
+            <span class="pl-v">field</span><span class="pl-k">=</span>models.DateField(<span class="pl-v">auto_now</span><span class="pl-k">=</span><span class="pl-c1">True</span>, <span class="pl-v">default</span><span class="pl-k">=</span>datetime(<span class="pl-c1">2016</span>, <span class="pl-c1">4</span>, <span class="pl-c1">8</span>, <span class="pl-c1">18</span>, <span class="pl-c1">21</span>, <span class="pl-c1">10</span>, <span class="pl-c1">499000</span>, <span class="pl-v">tzinfo</span><span class="pl-k">=</span>utc)),
+            <span class="pl-v">preserve_default</span><span class="pl-k">=</span><span class="pl-c1">False</span>,
+        ),
+        migrations.AddField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>text<span class="pl-pds">'</span></span>,
+            <span class="pl-v">field</span><span class="pl-k">=</span>models.TextField(<span class="pl-v">default</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span><span class="pl-pds">'</span></span>),
+            <span class="pl-v">preserve_default</span><span class="pl-k">=</span><span class="pl-c1">False</span>,
+        ),
+        migrations.RunPython(forwards),
+        migrations.RemoveField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>date_and_text<span class="pl-pds">'</span></span>,
+        ),
+        migrations.AlterUniqueTogether(
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">unique_together</span><span class="pl-k">=</span><span class="pl-c1">set</span>([(<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>)]),
+        ),
+    ]</pre></div>
+
+<p>What changed? We created a function called <code>forwards</code> that performs our data operation. In Django migrations, we don't use the standard <code>from models import Note</code>. Instead, the migration provides a surrogate model that we retrieved through <code>Note = apps.get_model('myapp', 'Note')</code>.</p>
+
+<p>We then wedge this <code>forwards()</code> data operation into the steps of <code>Migration.operations</code>. It is carefully placed <em>after</em> adding the new fields, <em>before</em> removing the old fields, and <em>before</em> adding that problematic uniqueness constraint. Why? We want our data operation to have access to both the old and new model fields. Within the <code>forwards()</code> function, we iterate over all existing Note objects and parse the old <code>date_and_text</code> field into the new <code>date</code> and <code>text</code> fields.</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
