@@ -94,7 +94,7 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 
 <span class="pl-k">def</span> <span class="pl-en">parse_date_and_text</span>(<span class="pl-smi">date_and_text</span>):
     header, text <span class="pl-k">=</span> date_and_text.split(<span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n</span><span class="pl-pds">'</span></span>, <span class="pl-c1">1</span>)
-    date <span class="pl-k">=</span> datetime.strptime(header, <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
+    date <span class="pl-k">=</span> datetime.strptime(header.strip(), <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
     <span class="pl-k">return</span> date, text</pre></div>
 
 <h2>
@@ -138,7 +138,7 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 
 <span class="pl-k">def</span> <span class="pl-en">parse_date_and_text</span>(<span class="pl-smi">date_and_text</span>):
     header, text <span class="pl-k">=</span> date_and_text.split(<span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n</span><span class="pl-pds">'</span></span>, <span class="pl-c1">1</span>)
-    date <span class="pl-k">=</span> datetime.strptime(header, <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
+    date <span class="pl-k">=</span> datetime.strptime(header.strip(), <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
     <span class="pl-k">return</span> date, text
 
 
@@ -182,6 +182,38 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 <p>What changed? We created a function called <code>forwards</code> that performs our data operation. In Django migrations, we don't use the standard <code>from models import Note</code>. Instead, the migration provides a surrogate model that we retrieved through <code>Note = apps.get_model('myapp', 'Note')</code>.</p>
 
 <p>We then wedge this <code>forwards()</code> data operation into the steps of <code>Migration.operations</code>. It is carefully placed <em>after</em> adding the new fields, <em>before</em> removing the old fields, and <em>before</em> adding that problematic uniqueness constraint. Why? We want our data operation to have access to both the old and new model fields. Within the <code>forwards()</code> function, we iterate over all existing Note objects and parse the old <code>date_and_text</code> field into the new <code>date</code> and <code>text</code> fields.</p>
+
+<p>Let's try again! Run <code>python manage.py migrate</code>. Sadly, I'm getting the same error: <code>django.db.utils.IntegrityError: indexed columns are not unique</code>. You might not get this error, but I did, because I happened to have multiple notes in my database with the same user and date! Never assume that your existing data will go along with new constraints.</p>
+
+<h3>
+<a id="this-is-more-work-than-i-thought" class="anchor" href="#this-is-more-work-than-i-thought" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>"This is more work than I thought..."</h3>
+
+<p>Let's modify the existing data operation step to clean up notes that will run afoul of our uniqueness constraint. Since the constraint hasn't been applied at the time Django runs the <code>forwards()</code> function, we're free to handle this ourselves. Here's how I've done it:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> collections <span class="pl-k">import</span> defaultdict
+<span class="pl-k">def</span> <span class="pl-en">forwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
+    Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
+    user_date_notes <span class="pl-k">=</span> defaultdict(<span class="pl-c1">list</span>)
+    <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
+        note.date, note.text <span class="pl-k">=</span> parse_date_and_text(note.date_and_text)
+        note.save()
+        user_date_notes[(note.user, note.date)].append(note)
+
+    <span class="pl-c"># Merge any notes from the same user on the same date</span>
+    <span class="pl-k">for</span> same_date_notes <span class="pl-k">in</span> user_date_notes.values():
+        <span class="pl-k">if</span> <span class="pl-c1">len</span>(same_date_notes) <span class="pl-k">&gt;</span> <span class="pl-c1">1</span>:
+            new_text <span class="pl-k">=</span> <span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n\n</span><span class="pl-pds">'</span></span>.join([note.text <span class="pl-k">for</span> note <span class="pl-k">in</span> same_date_notes])
+            same_date_notes[<span class="pl-c1">0</span>].text <span class="pl-k">=</span> new_text
+            same_date_notes[<span class="pl-c1">0</span>].save()
+            <span class="pl-k">for</span> i <span class="pl-k">in</span> <span class="pl-c1">range</span>(<span class="pl-c1">1</span>, <span class="pl-c1">len</span>(same_date_notes)):
+                same_date_notes[i].delete()</pre></div>
+
+<p>I've modified the existing <code>forwards()</code> operation to keep lists of all notes that share the same user and the same date. When one of those lists has more than one note, I merge the note text, save it to the first note, then delete the other notes. Now our data should be unique! Let's try to run this one more time: <code>python manage.py migrate</code>. It works!</p>
+
+<h3>
+<a id="so-thats-it-right" class="anchor" href="#so-thats-it-right" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>"So that's it! Right?"</h3>
+
+<p>It's true that we've successfully updated our schema to match our new Note object, and we've successfully copied over the new data. However, this is nowhere near useful for a production environment! Say we apply this migration to our production database. In the minutes before we can apply our new Python code to the webservers, they'll all be failing with the following error:</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
