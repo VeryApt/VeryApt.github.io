@@ -306,7 +306,7 @@ no such column: myapp_note.date_and_text
 
 <p>At this stage, our site users are interacting with the new Note object. Any new notes they make are stored in the new <code>date</code> and <code>text</code> fields.</p>
 
-<p>** We do have a temporary inconvenience: users can't yet see existing notes. ** After step 2.2 and before we perform this data migration, the text values for existing notes aren't visible on the website. The information is all there in the database, but we haven't yet transferred it to the new fields which are actually visible. Later on, I'll explain how to get around this issue if it would present a problem.</p>
+<p><strong>We do have a temporary inconvenience: users can't yet see existing notes.</strong> After step 2.2 and before we perform this data migration, the text values for existing notes aren't visible on the website. The information is all there in the database, but we haven't yet transferred it to the new fields which are actually visible. Later on, I'll explain how to get around this issue if it would present a problem.</p>
 
 <p>Let's make a data migration to parse and copy the old notes field, as we did in the earlier section. Run <code>python manage.py makemigrations myapp --empty</code>. Update the contents like so:</p>
 
@@ -350,6 +350,28 @@ no such column: myapp_note.date_and_text
 <p>I also added a reverse method <code>backwards()</code> to make this data migration reversible. If we ran into problems, this would let us safely bring our database schema back to the starting point, keeping our data intact.</p>
 
 <p>Let's apply this data migration right away so people can once again see their old/existing notes: run <code>python manage.py migrate</code> on the production database. Note that Django might complain about model changes not being in a migration (from when we commented out <code>date_and_text</code> in our <code>models.py</code> earlier) but that's fine for now. We'll take care of that next.</p>
+
+<h3>
+<a id="4-remove-old-things--tighten-constraints" class="anchor" href="#4-remove-old-things--tighten-constraints" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>4. Remove old things &amp; tighten constraints</h3>
+
+<p>We're almost done! From a site user's point of view, everything has been fully switched to the new system. All that's left to do is remove the old model field and introduce the database constraints that we removed or left out earlier. Let's bring our <code>Note</code> model in line with what we wanted all along:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">Note</span>(<span class="pl-e">models</span>.<span class="pl-e">Model</span>):
+    user <span class="pl-k">=</span> models.ForeignKey(User)
+    date <span class="pl-k">=</span> models.DateField(<span class="pl-v">auto_now</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
+    text <span class="pl-k">=</span> models.TextField()
+
+    <span class="pl-k">class</span> <span class="pl-en">Meta</span>:
+        unique_together <span class="pl-k">=</span> ((<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>),)</pre></div>
+
+<p>Run <code>python manage.py makemigrations myapp</code>. Django doesn't know that we previously wrote a data migration to fill in the <code>date</code> field, so we'll humor it: type "1", then enter <code>timezone.now()</code>.</p>
+
+<p>This final migration makes the following changes:
+1. Re-enabled <code>auto_now=True</code> for our <code>date</code> field (introduce feature).
+2. Makes the <code>date</code> field required (introduce constraint).
+3. Makes the <code>text</code> field required (introduce constraint).
+4. Removes the old <code>date_and_text</code> field for good (remove old stuff).
+5. Adds our unique constraint for user+date (introduce constraint).</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
