@@ -28,6 +28,8 @@
 
 <p>Django makes it incredibly easy to change the schema of your database when you make a simple change to one of your Python models. However, when you need to make more complicated changes (especially changes involving data), it isn't always obvious how to perform the change without downtime. In this first post, we'll go over how to create and perform a sequence of migrations for a relatively tricky model change, all without interruption to our end users.</p>
 
+<p>Prerequisites: Django 1.9</p>
+
 <h2>
 <a id="the-setup" class="anchor" href="#the-setup" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>The setup</h2>
 
@@ -235,7 +237,8 @@ no such column: myapp_note.date_and_text
 
 <ol>
 <li>Add new things &amp; loosen constraints</li>
-<li>Migrate data and switch live code to new things</li>
+<li>Switch live code to new things</li>
+<li>Migrate data</li>
 <li>Remove old things &amp; tighten constraints.</li>
 </ol>
 
@@ -267,6 +270,97 @@ no such column: myapp_note.date_and_text
 <p>To recap, I've added the new <code>date</code> and <code>text</code> fields, but I haven't removed the <code>date_and_text</code> field. I'm keeping it around so I can access its data when it comes time to do our data migration.</p>
 
 <p>I've also removed or left out several constraints: all of the fields that we're touching in this migration can now be null. This way, when we migrate the database, live (but old) code on the webservers won't complain about the new <code>text</code> and <code>date</code> fields (these will be in the database but not yet in the Python code). <em>After</em> we deploy, <em>new</em> code on the webservers won't complain about blank values in the (soon-to-be-removed) <code>date_and_text</code> field (still in the database, but no longer in the Python code).</p>
+
+<p>Let's create our first migration: <code>python manage.py makemigrations myapp</code></p>
+
+<h3>
+<a id="2-switch-live-code-to-new-things" class="anchor" href="#2-switch-live-code-to-new-things" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>2. Switch live code to new things</h3>
+
+<p>Let's update our user-facing code to fall in line with our DB changes. Our Notes admin is now</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">NoteAdmin</span>(<span class="pl-e">admin</span>.<span class="pl-e">ModelAdmin</span>):
+    fields <span class="pl-k">=</span> (<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>text<span class="pl-pds">'</span></span>)</pre></div>
+
+<p>For a real site, you'd also be updating any other views that accessed the old <code>date_and_text</code> field and switching them over to the new <code>date</code> and <code>text</code> fields.</p>
+
+<p>Finally, we'll comment out the old <code>date_and_text</code> field in our <code>models.py</code> so Django no longer expects to see it in the database. It will hang around in the DB for a little bit longer, but from now on Django will ignore it.</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">Note</span>(<span class="pl-e">models</span>.<span class="pl-e">Model</span>):
+    user <span class="pl-k">=</span> models.ForeignKey(User)
+    <span class="pl-c"># date_and_text = models.TextField(blank=True)</span>
+    date <span class="pl-k">=</span> models.DateField(<span class="pl-v">null</span><span class="pl-k">=</span><span class="pl-c1">True</span>, <span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
+    text <span class="pl-k">=</span> models.TextField(<span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)</pre></div>
+
+<p>At this point, <strong>nowhere</strong> in our Python code should be referencing the old <code>date_and_text</code> field. Any webserver running the new code will be showing users the "new" Note fields.</p>
+
+<p>We're finally ready to start updating our production server and database!</p>
+
+<ol>
+<li>Run <code>python manage.py migrate</code> on our production database, corresponding to the migration we made in step 1 (do NOT make or run a migration corresponding to the change we just made in <code>models.py</code>). Our live code on the webservers doesn't yet know about these new <code>date</code> and <code>text</code> fields we just added to the database, but we're safe since both are allowed to be blank/null. Django will ignore them during SELECT operations, and the database will be okay with null values during INSERT/UPDATE operations.</li>
+<li>Deploy the new Python code to our webservers. Assuming that we have a cluster of servers with rolling deployments, at any given time some servers may have the old code version and some servers may have the new code version. Since we've loosened any constraints on our fields, both the old and new code versions should work properly.</li>
+<li>Wait for all webservers to update to the new code version.</li>
+</ol>
+
+<h3>
+<a id="3-migrate-data" class="anchor" href="#3-migrate-data" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3. Migrate data</h3>
+
+<p>At this stage, our site users are interacting with the new Note object. Any new notes they make are stored in the new <code>date</code> and <code>text</code> fields.</p>
+
+<p>** We do have a temporary inconvenience: users can't yet see existing notes. ** After step 2.2 and before we perform this data migration, the text values for existing notes aren't visible on the website. The information is all there in the database, but we haven't yet transferred it to the new fields which are actually visible. Later on, I'll explain how to get around this issue if it would present a problem.</p>
+
+<p>Let's make a data migration to parse and copy the old notes field, as we did in the earlier section. Run <code>python manage.py makemigrations myapp --empty</code>. Update the contents like so:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> __future__ <span class="pl-k">import</span> unicode_literals
+
+<span class="pl-k">from</span> collections <span class="pl-k">import</span> defaultdict
+<span class="pl-k">from</span> datetime <span class="pl-k">import</span> datetime
+<span class="pl-k">from</span> django.db <span class="pl-k">import</span> migrations
+
+
+<span class="pl-k">def</span> <span class="pl-en">parse_date_and_text</span>(<span class="pl-smi">date_and_text</span>):
+    header, text <span class="pl-k">=</span> date_and_text.split(<span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n</span><span class="pl-pds">'</span></span>, <span class="pl-c1">1</span>)
+    date <span class="pl-k">=</span> datetime.strptime(header.strip(), <span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>).date()
+    <span class="pl-k">return</span> date, text
+
+
+<span class="pl-k">def</span> <span class="pl-en">forwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
+    Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
+    user_date_notes <span class="pl-k">=</span> defaultdict(<span class="pl-c1">list</span>)
+    <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
+        note.date, note.text <span class="pl-k">=</span> parse_date_and_text(note.date_and_text)
+        note.save()
+        user_date_notes[(note.user, note.date)].append(note)
+
+    <span class="pl-c"># Merge any notes from the same user on the same date</span>
+    <span class="pl-k">for</span> same_date_notes <span class="pl-k">in</span> user_date_notes.values():
+        <span class="pl-k">if</span> <span class="pl-c1">len</span>(same_date_notes) <span class="pl-k">&gt;</span> <span class="pl-c1">1</span>:
+            new_text <span class="pl-k">=</span> <span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n\n</span><span class="pl-pds">'</span></span>.join([note.text <span class="pl-k">for</span> note <span class="pl-k">in</span> same_date_notes])
+            same_date_notes[<span class="pl-c1">0</span>].text <span class="pl-k">=</span> new_text
+            same_date_notes[<span class="pl-c1">0</span>].save()
+            <span class="pl-k">for</span> i <span class="pl-k">in</span> <span class="pl-c1">range</span>(<span class="pl-c1">1</span>, <span class="pl-c1">len</span>(same_date_notes)):
+                same_date_notes[i].delete()
+
+
+<span class="pl-k">def</span> <span class="pl-en">backwards</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
+    Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
+    <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
+        note.date_and_text <span class="pl-k">=</span> <span class="pl-s"><span class="pl-pds">'</span><span class="pl-c1">{}</span><span class="pl-cce">\n</span><span class="pl-c1">{}</span><span class="pl-pds">'</span></span>.format(note.date.strftime(<span class="pl-s"><span class="pl-pds">'</span>%Y-%m-<span class="pl-c1">%d</span><span class="pl-pds">'</span></span>), note.text)
+        note.save()
+
+
+<span class="pl-k">class</span> <span class="pl-en">Migration</span>(<span class="pl-e">migrations</span>.<span class="pl-e">Migration</span>):
+
+    dependencies <span class="pl-k">=</span> [
+        (<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>0002_auto_20160408_1620<span class="pl-pds">'</span></span>),
+    ]
+
+    operations <span class="pl-k">=</span> [
+        migrations.RunPython(forwards, <span class="pl-v">reverse_code</span><span class="pl-k">=</span>backwards)
+    ]</pre></div>
+
+<p>Our data migration parses and copies data from the old and hidden <code>date_and_text</code> field to the new <code>date</code> and <code>text</code> fields. Remember how we waited for all our new code to deploy before performing this step? That ensured that nobody had added anything new to <code>date_and_text</code> that we could potentially overlook.</p>
+
+<p>The data migration </p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
