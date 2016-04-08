@@ -372,6 +372,69 @@ no such column: myapp_note.date_and_text
 3. Makes the <code>text</code> field required (introduce constraint).
 4. Removes the old <code>date_and_text</code> field for good (remove old stuff).
 5. Adds our unique constraint for user+date (introduce constraint).</p>
+
+<p>The only change we'll make to this migration is an extra data operation to ensure our existing data obeys the new uniqueness constraint. We'll go through all notes and merge ones by the same user on the same date. Our migration file now looks like:</p>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">from</span> __future__ <span class="pl-k">import</span> unicode_literals
+
+<span class="pl-k">from</span> collections <span class="pl-k">import</span> defaultdict
+<span class="pl-k">import</span> datetime
+<span class="pl-k">from</span> django.db <span class="pl-k">import</span> migrations, models
+<span class="pl-k">from</span> django.utils.timezone <span class="pl-k">import</span> utc
+
+
+<span class="pl-k">def</span> <span class="pl-en">make_unique</span>(<span class="pl-smi">apps</span>, <span class="pl-smi">schema_editor</span>):
+    Note <span class="pl-k">=</span> apps.get_model(<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>Note<span class="pl-pds">'</span></span>)
+    user_date_notes <span class="pl-k">=</span> defaultdict(<span class="pl-c1">list</span>)
+    <span class="pl-k">for</span> note <span class="pl-k">in</span> Note.objects.all():
+        user_date_notes[(note.user, note.date)].append(note)
+
+    <span class="pl-c"># Merge notes from the same user on the same date</span>
+    <span class="pl-k">for</span> notes_list <span class="pl-k">in</span> user_date_notes.values():
+        <span class="pl-k">if</span> <span class="pl-c1">len</span>(notes_list) <span class="pl-k">&gt;</span> <span class="pl-c1">1</span>:
+            new_text <span class="pl-k">=</span> <span class="pl-s"><span class="pl-pds">'</span><span class="pl-cce">\n\n</span><span class="pl-pds">'</span></span>.join([note.text <span class="pl-k">for</span> note <span class="pl-k">in</span> notes_list])
+            notes_list[<span class="pl-c1">0</span>].text <span class="pl-k">=</span> new_text
+            notes_list[<span class="pl-c1">0</span>].save()
+            <span class="pl-k">for</span> i <span class="pl-k">in</span> <span class="pl-c1">range</span>(<span class="pl-c1">1</span>, <span class="pl-c1">len</span>(notes_list)):
+                notes_list[i].delete()
+
+
+<span class="pl-k">class</span> <span class="pl-en">Migration</span>(<span class="pl-e">migrations</span>.<span class="pl-e">Migration</span>):
+
+    dependencies <span class="pl-k">=</span> [
+        (<span class="pl-s"><span class="pl-pds">'</span>myapp<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>0003_auto_20160408_1621<span class="pl-pds">'</span></span>),
+    ]
+
+    operations <span class="pl-k">=</span> [
+        migrations.AlterField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>,
+            <span class="pl-v">field</span><span class="pl-k">=</span>models.DateField(<span class="pl-v">auto_now</span><span class="pl-k">=</span><span class="pl-c1">True</span>, <span class="pl-v">default</span><span class="pl-k">=</span>datetime.datetime(<span class="pl-c1">2016</span>, <span class="pl-c1">4</span>, <span class="pl-c1">8</span>, <span class="pl-c1">20</span>, <span class="pl-c1">41</span>, <span class="pl-c1">25</span>, <span class="pl-c1">872000</span>, <span class="pl-v">tzinfo</span><span class="pl-k">=</span>utc)),
+            <span class="pl-v">preserve_default</span><span class="pl-k">=</span><span class="pl-c1">False</span>,
+        ),
+        migrations.AlterField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>text<span class="pl-pds">'</span></span>,
+            <span class="pl-v">field</span><span class="pl-k">=</span>models.TextField(),
+        ),
+        migrations.RemoveField(
+            <span class="pl-v">model_name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>date_and_text<span class="pl-pds">'</span></span>,
+        ),
+        migrations.RunPython(make_unique, <span class="pl-v">reverse_code</span><span class="pl-k">=</span>migrations.RunPython.noop),
+        migrations.AlterUniqueTogether(
+            <span class="pl-v">name</span><span class="pl-k">=</span><span class="pl-s"><span class="pl-pds">'</span>note<span class="pl-pds">'</span></span>,
+            <span class="pl-v">unique_together</span><span class="pl-k">=</span><span class="pl-c1">set</span>([(<span class="pl-s"><span class="pl-pds">'</span>user<span class="pl-pds">'</span></span>, <span class="pl-s"><span class="pl-pds">'</span>date<span class="pl-pds">'</span></span>)]),
+        ),
+    ]
+</pre></div>
+
+<p>Finally, run this migration on the production database: <code>python manage.py migrate</code>. That's it!</p>
+
+<h2>
+<a id="conclusion" class="anchor" href="#conclusion" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Conclusion</h2>
+
+<p>We just performed a sequence of migrations to swap our old Note model for a new one on our live production server. Even with our cluster of webservers, no user should have ever seen a server error. The only side-effect was that for a couple minutes, users weren't able to view existing notes. In a future post, I'll show how to add a few more steps to prevent even that scenario!</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
