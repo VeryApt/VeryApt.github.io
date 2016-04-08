@@ -214,6 +214,53 @@ admin.site.register(Note, NoteAdmin)</pre></div>
 <a id="so-thats-it-right" class="anchor" href="#so-thats-it-right" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>"So that's it! Right?"</h3>
 
 <p>It's true that we've successfully updated our schema to match our new Note object, and we've successfully copied over the new data. However, this is nowhere near useful for a production environment! Say we apply this migration to our production database. In the minutes before we can apply our new Python code to the webservers, they'll all be failing with the following error:</p>
+
+<pre><code>OperationalError at /admin/myapp/note/
+no such column: myapp_note.date_and_text
+</code></pre>
+
+<p>Why is this happening? In the moments between migrating the database and updating our webservers with the new Python code (i.e. our new <code>models.py</code> and new <code>admin.py</code>), the existing live code on the webservers doesn't know that the database schema has been changed. The live code is looking for our old <code>date_and_text</code> field in the database, but it doesn't exist any more! For any production environment, having a period where your site is crashing like this, even if just for a few minutes, is unacceptable.</p>
+
+<p>(Also, another issue: our migration wasn't reversible, so if something went wrong and we wanted to back-track to our earlier state, we'd be out of luck!)</p>
+
+<h2>
+<a id="the-right-way" class="anchor" href="#the-right-way" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>The right way</h2>
+
+<p>In this section, we'll start over. We're going to craft this model change into a series of migrations and code deployments, designed so that our users don't experience a second of downtime.</p>
+
+<h3>
+<a id="the-general-principles" class="anchor" href="#the-general-principles" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>The general principles</h3>
+
+<p>In general, for a seamless migration experience we'll structure our migrations with the following order:</p>
+
+<ol>
+<li>Add new things &amp; loosen constraints</li>
+<li>Migrate data and switch live code to new things</li>
+<li>Remove old things &amp; tighten constraints.</li>
+</ol>
+
+<p>We saw how constraints could come to bite us in the previous section. Now, we'll plan for them ahead of time, and split up our migrations and code deployments so that we don't impact our end users.</p>
+
+<p>Plus, as a general good practice, we'll <em>design all our migrations to be reversible</em> so we have an out if something goes wrong.</p>
+
+<h3>
+<a id="1-add-new-things--loosen-constraints" class="anchor" href="#1-add-new-things--loosen-constraints" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>1. Add new things &amp; loosen constraints</h3>
+
+<p>This time, let's add our new fields to the original <code>Note</code> model but leave the old ones in place (for now). Also, we'll hold off on any constraints or special features, and loosen existing constraints:</p>
+
+<ul>
+<li>I've left out <code>auto_now=True</code> from the <code>date</code> field so we can back-fill it during migrations (it technically worked during the last section without any special treatment, but we'll be pedantic).</li>
+<li>I've added <code>null=True, blank=True</code> to the <code>date</code> field.</li>
+<li>I've added <code>blank=True</code> to the <code>date_and_text</code> field.</li>
+<li>I've added <code>blank=True</code> to the <code>text</code> field.</li>
+<li>I've left out the uniqueness constraint.</li>
+</ul>
+
+<div class="highlight highlight-source-python"><pre><span class="pl-k">class</span> <span class="pl-en">Note</span>(<span class="pl-e">models</span>.<span class="pl-e">Model</span>):
+    user <span class="pl-k">=</span> models.ForeignKey(User)
+    date_and_text <span class="pl-k">=</span> models.TextField(<span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
+    date <span class="pl-k">=</span> models.DateField(<span class="pl-v">null</span><span class="pl-k">=</span><span class="pl-c1">True</span>, <span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)
+    text <span class="pl-k">=</span> models.TextField(<span class="pl-v">blank</span><span class="pl-k">=</span><span class="pl-c1">True</span>)</pre></div>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
